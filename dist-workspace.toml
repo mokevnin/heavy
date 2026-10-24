@@ -11,6 +11,7 @@ ci = "github"
 installers = ["shell", "homebrew"]
 # The Homebrew tap the formula is published to (committed by publish-homebrew.yml with RELEASE_PLEASE_TOKEN)
 tap = "mokevnin/homebrew-tap"
+create-release = false
 publish-jobs = ["./publish-homebrew", "./publish-crates"]
 # Target platforms to build apps for (Rust target-triple syntax). Windows is not built: the
 # queue is tested on macOS and Linux only.
