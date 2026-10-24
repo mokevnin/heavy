@@ -1,0 +1,3 @@
+[tools]
+"aqua:axodotdev/cargo-dist" = "0.33.1"
+rust = "latest"
