@@ -12,6 +12,6 @@
   (with `RELEASE_PLEASE_TOKEN`, so that the tag starts a workflow) runs `release.yml`. `dist`
   (cargo-dist) generates that workflow from `dist-workspace.toml`; run `dist generate` after
   changing the config and never edit the workflow by hand. The release builds the archives,
-  publishes the GitHub release, the Homebrew formula (`HOMEBREW_TAP_TOKEN`) and the crate
+  publishes the GitHub release, the Homebrew formula (`publish-homebrew.yml`: `RELEASE_PLEASE_TOKEN` must reach `homebrew-tap`) and the crate
   (`CARGO_REGISTRY_TOKEN`, `publish-crates.yml`). Never bump the version or tag by hand.
 - Commit messages follow Conventional Commits. Text in this repository is English.

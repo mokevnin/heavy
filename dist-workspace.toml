@@ -9,9 +9,9 @@ cargo-dist-version = "0.33.1"
 ci = "github"
 # The installers to generate for each app: a shell installer and a Homebrew formula
 installers = ["shell", "homebrew"]
-# The Homebrew tap the formula is published to (needs the HOMEBREW_TAP_TOKEN secret)
+# The Homebrew tap the formula is published to (committed by publish-homebrew.yml with RELEASE_PLEASE_TOKEN)
 tap = "mokevnin/homebrew-tap"
-publish-jobs = ["homebrew", "./publish-crates"]
+publish-jobs = ["./publish-homebrew", "./publish-crates"]
 # Target platforms to build apps for (Rust target-triple syntax). Windows is not built: the
 # queue is tested on macOS and Linux only.
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]

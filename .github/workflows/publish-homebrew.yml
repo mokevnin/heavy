@@ -1,0 +1,44 @@
+name: Publish Homebrew formula
+
+# Called by release.yml (a custom publish job of dist) once the GitHub release exists: commits the
+# formula dist generated (heavy.rb, an asset of the release) to the tap. It replaces the publish
+# job of dist, which reads a secret of its own, so that the one RELEASE_PLEASE_TOKEN does both.
+on:
+  workflow_call:
+    inputs:
+      plan:
+        description: The dist plan of the release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+      PLAN: ${{ inputs.plan }}
+    steps:
+      - name: Checkout the tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mokevnin/homebrew-tap
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          persist-credentials: true
+
+      - name: Fetch the formula of the release
+        run: |
+          tag="$(jq -r .announcement_tag <<<"$PLAN")"
+          gh release download "$tag" --repo mokevnin/heavy --pattern heavy.rb --dir Formula --clobber
+
+      - name: Commit the formula
+        run: |
+          version="$(jq -r '.releases[0].app_version' <<<"$PLAN")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/heavy.rb
+          git commit -m "heavy ${version}"
+          git push
