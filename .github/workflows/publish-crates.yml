@@ -19,10 +19,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # dist gives a custom publish job no contents permission, so the checkout uses a token.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           persist-credentials: false
 
+      # No cache: what is published must not come from a restored one.
       - name: Setup mise
         uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          cache: false
 
       - name: Publish to crates.io
         run: cargo publish --locked
