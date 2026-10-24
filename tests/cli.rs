@@ -51,7 +51,7 @@ impl Slots {
     }
 
     fn status(&self) -> String {
-        let output = self.heavy().arg("status").output().unwrap();
+        let output = self.heavy().arg("--status").output().unwrap();
         String::from_utf8(output.stdout).unwrap()
     }
 
@@ -223,4 +223,40 @@ fn status_says_who_holds_a_slot() {
     assert!(status.contains("sleep 3"), "{status}");
     holder.kill().unwrap();
     holder.wait().unwrap();
+}
+
+#[test]
+fn options_come_before_or_after_the_status_flag() {
+    let slots = Slots::new();
+
+    let before = slots
+        .heavy()
+        .args(["--slots", "2", "--pool", "other", "--status"])
+        .output()
+        .unwrap();
+    let after = slots
+        .heavy()
+        .args(["--status", "--slots", "2", "--pool", "other"])
+        .output()
+        .unwrap();
+
+    for output in [before, after] {
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert!(text.contains("pool 'other'"), "{text}");
+        assert!(text.contains("slot 1: free"), "{text}");
+    }
+}
+
+#[test]
+fn a_command_named_status_after_the_separator_is_run() {
+    let slots = Slots::new();
+
+    let output = slots
+        .heavy()
+        .args(["--", "echo", "status"])
+        .output()
+        .unwrap();
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "status");
 }

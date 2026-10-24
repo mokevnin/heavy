@@ -7,7 +7,7 @@ use std::process::{Command, ExitCode};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use heavy::Pool;
 
 /// Run a command while holding one of a few machine-wide slots, so many checkouts and agents
@@ -16,7 +16,7 @@ use heavy::Pool;
 /// A command started inside a held slot (it sees `HEAVY_HELD`) runs at once, so nesting never
 /// deadlocks, and so does any command when CI is set, unless --no-skip-ci is given.
 #[derive(Parser)]
-#[command(version, args_conflicts_with_subcommands = true)]
+#[command(version)]
 struct Cli {
     #[command(flatten)]
     pool: PoolArgs,
@@ -29,11 +29,12 @@ struct Cli {
     #[arg(long, value_name = "SECONDS", env = "HEAVY_TIMEOUT")]
     timeout: Option<u64>,
 
-    #[command(subcommand)]
-    subcommand: Option<Sub>,
+    /// Show who holds the slots of the pool, instead of running a command.
+    #[arg(long)]
+    status: bool,
 
     /// The command to run, after `--`.
-    #[arg(trailing_var_arg = true, num_args = 1.., value_name = "COMMAND")]
+    #[arg(last = true, value_name = "COMMAND")]
     command: Vec<OsString>,
 }
 
@@ -50,12 +51,6 @@ struct PoolArgs {
     /// The directory that holds the slot files of every pool (default: heavy in the temp directory).
     #[arg(long, env = "HEAVY_DIR")]
     dir: Option<PathBuf>,
-}
-
-#[derive(Subcommand)]
-enum Sub {
-    /// Show who holds the slots of the pool.
-    Status,
 }
 
 impl PoolArgs {
@@ -87,13 +82,13 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: &Cli) -> std::io::Result<ExitCode> {
-    if let Some(Sub::Status) = cli.subcommand {
+    if cli.status {
         return status(&cli.pool);
     }
     let Some((program, args)) = cli.command.split_first() else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "no command given: heavy [OPTIONS] -- COMMAND [ARGS]...",
+            "no command given: heavy [OPTIONS] -- COMMAND [ARGS]... (or heavy --status)",
         ));
     };
 
