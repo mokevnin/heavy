@@ -34,9 +34,30 @@ The binaries are built for macOS and Linux, on arm64 and x86_64.
   `kill -9` included, so a crashed run never leaves a slot taken. The command does not inherit the
   lock: a `heavy` that is killed outright frees its slot at once while its command, if still
   running, is no longer counted.
-- **Waits and says so.** When every slot is busy it prints
-  `heavy: all N slots of pool 'default' are busy, waiting for one` once and waits.
-  `--timeout SECONDS` gives up with exit status 75 instead.
+- **Waits and says who it waits for.** When every slot is busy it says so once, with who holds
+  each slot, and when it gets one, how long it waited:
+
+  ```
+  heavy: all 2 slots of pool 'default' are busy, waiting for one
+  heavy:   slot 0: held by pid 81234 for 252s: go test ./...
+  heavy:   slot 1: held by pid 81302 for 40s: pnpm exec tsc --noEmit
+  heavy: got slot 1 after 37.2s
+  ```
+
+  A command that finds a free slot prints nothing.
+- **Waits as long as you let it.** `--timeout SECONDS` (`HEAVY_TIMEOUT`) stops waiting; then
+  `--on-timeout fail` (the default) exits with status 75 and `--on-timeout run`
+  (`HEAVY_ON_TIMEOUT`) runs the command anyway, without a slot, so a busy machine slows a check
+  down but never fails it.
+- **Logs every wait.** `--log FILE` (`HEAVY_LOG`) appends one JSON line per queued run, to see
+  how long commands wait and whether the number of slots is right:
+
+  ```json
+  {"start":1761510000,"pool":"default","command":"go test ./...","cwd":"/src/app","slot":1,"waited_ms":37210,"ran_ms":81022,"timed_out":false,"exit":0}
+  ```
+
+  `slot` and `ran_ms` are `null` when the run timed out without running. Runs that skip the queue
+  (nested or on CI) are not logged.
 - **Nesting never deadlocks.** The command runs with `HEAVY_HELD=<pool>` and `HEAVY_SLOT=<n>`; a
   `heavy` of the same pool started inside it runs its command at once. A task that calls another
   heavy task is therefore safe.
@@ -71,6 +92,7 @@ build it without the command line with `default-features = false`.
 
 | | |
 | --- | --- |
+| a lock file in a script | N lock files are easy; the rest is the work: freeing a slot on `kill -9`, nesting without a deadlock, passing on signals and exit codes, saying who holds the slots and how long a command waited |
 | `flock(1)` | one lock, not N slots; not on macOS without Homebrew's util-linux |
 | GNU `parallel --semaphore` (`sem`) | needs Perl, and a nested call deadlocks |
 | the GNU make jobserver | a holder killed with `SIGKILL` loses its token, and only make, ninja and cargo speak it |
