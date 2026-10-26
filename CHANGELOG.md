@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/mokevnin/heavy/compare/v0.1.1...v0.1.2) (2026-10-26)
+
+
+### Features
+
+* say who holds the slots, run on timeout, log every wait ([#3](https://github.com/mokevnin/heavy/issues/3)) ([a7b37c1](https://github.com/mokevnin/heavy/commit/a7b37c16e4174d611da41a1aa0bc2cea41dd72ea))
+
 ## [0.1.1](https://github.com/mokevnin/heavy/compare/v0.1.0...v0.1.1) (2026-10-24)
 
 
