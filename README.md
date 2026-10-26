@@ -44,7 +44,8 @@ The binaries are built for macOS and Linux, on arm64 and x86_64.
   `--no-skip-ci` turns that off.
 - **Pools.** `--pool NAME` (`HEAVY_POOL`) keeps pools apart: they do not share slots.
 - **Exit status.** The command's own; `128 + n` when a signal `n` ended it; 127 when it does not
-  exist; 75 on a timeout. `SIGINT`, `SIGTERM` and `SIGHUP` sent to `heavy` reach the command.
+  exist; 75 on a timeout (a command that exits 75 itself looks the same: a timeout is the one
+  that prints `gave up waiting` on stderr). `SIGINT`, `SIGTERM` and `SIGHUP` sent to `heavy` reach the command.
 - **`heavy --status`** shows who holds each slot (pid, how long, the command). The record is for
   display only; the lock is the source of truth.
 

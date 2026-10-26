@@ -80,6 +80,20 @@ fn it_returns_the_exit_code_of_the_command() {
 }
 
 #[test]
+fn a_command_that_exits_75_is_told_from_a_timeout_by_stderr_only() {
+    let slots = Slots::new();
+
+    let output = slots
+        .heavy()
+        .args(["--", "sh", "-c", "exit 75"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(75));
+    assert!(!stderr(&output).contains("gave up waiting"));
+}
+
+#[test]
 fn a_command_that_does_not_exist_exits_127() {
     let slots = Slots::new();
 
