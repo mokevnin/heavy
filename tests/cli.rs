@@ -28,6 +28,8 @@ impl Slots {
             .env_remove("HEAVY_SLOT")
             .env_remove("HEAVY_NO_SKIP_CI")
             .env_remove("HEAVY_TIMEOUT")
+            .env_remove("HEAVY_ON_TIMEOUT")
+            .env_remove("HEAVY_LOG")
             .env_remove("CI");
         command
     }
@@ -154,6 +156,96 @@ fn a_second_heavy_waits_until_the_first_is_done() {
     assert!(stderr(&output).contains("all 1 slots of pool 'test' are busy"));
     assert!(took >= Duration::from_secs(1), "waited only {took:?}");
     holder.wait().unwrap();
+}
+
+#[test]
+fn a_waiting_heavy_says_who_holds_the_slots_and_how_long_it_waited() {
+    let slots = Slots::new();
+    let mut holder = slots.hold(&["sleep", "2"]);
+
+    let (output, _) = Slots::run(slots.heavy().args(["--", "true"]));
+
+    let stderr = stderr(&output);
+    assert!(output.status.success());
+    assert!(stderr.contains("slot 0: held by pid"), "{stderr}");
+    assert!(stderr.contains("sleep 2"), "{stderr}");
+    assert!(stderr.contains("got slot 0 after"), "{stderr}");
+    holder.wait().unwrap();
+}
+
+#[test]
+fn a_heavy_that_does_not_wait_says_nothing() {
+    let slots = Slots::new();
+
+    let output = slots.heavy().args(["--", "true"]).output().unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn on_timeout_run_runs_the_command_without_a_slot() {
+    let slots = Slots::new();
+    let mut holder = slots.hold(&["sleep", "4"]);
+
+    let (output, took) = Slots::run(slots.heavy().args([
+        "--timeout",
+        "1",
+        "--on-timeout",
+        "run",
+        "--",
+        "sh",
+        "-c",
+        "echo \"[$HEAVY_SLOT]\"; exit 3",
+    ]));
+
+    let stderr = stderr(&output);
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "[]");
+    assert!(stderr.contains("running without one"), "{stderr}");
+    assert!(!stderr.contains("gave up waiting"), "{stderr}");
+    assert!(took < Duration::from_secs(3), "took {took:?}");
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+}
+
+#[test]
+fn the_log_has_a_line_for_every_queued_run() {
+    let slots = Slots::new();
+    let log = slots.dir.path().join("runs.jsonl");
+    let mut holder = slots.hold(&["sleep", "3"]);
+
+    let (timed_out, _) = Slots::run(slots.heavy().env("HEAVY_LOG", &log).args([
+        "--timeout",
+        "1",
+        "--",
+        "echo",
+        "a \"quoted\" word",
+    ]));
+    holder.wait().unwrap();
+    let (ran, _) = Slots::run(
+        slots
+            .heavy()
+            .env("HEAVY_LOG", &log)
+            .args(["--", "sh", "-c", "exit 2"]),
+    );
+
+    assert_eq!(timed_out.status.code(), Some(75));
+    assert_eq!(ran.status.code(), Some(2));
+    let text = std::fs::read_to_string(&log).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(
+        lines[0].contains(r#""command":"echo a \"quoted\" word""#),
+        "{text}"
+    );
+    assert!(lines[0].contains(r#""slot":null"#), "{text}");
+    assert!(lines[0].contains(r#""ran_ms":null"#), "{text}");
+    assert!(lines[0].contains(r#""timed_out":true"#), "{text}");
+    assert!(lines[0].contains(r#""exit":75"#), "{text}");
+    assert!(lines[1].contains(r#""slot":0"#), "{text}");
+    assert!(lines[1].contains(r#""timed_out":false"#), "{text}");
+    assert!(lines[1].contains(r#""exit":2"#), "{text}");
 }
 
 #[test]
