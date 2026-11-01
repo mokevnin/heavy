@@ -24,6 +24,23 @@ curl -LsSf https://github.com/mokevnin/heavy/releases/latest/download/heavy-inst
 
 The binaries are built for macOS and Linux, on arm64 and x86_64.
 
+## Set up with a coding agent
+
+Copy this prompt into Claude Code, Codex, Cursor or another coding agent opened in your project.
+The agent installs `heavy`, wraps the project's heavy commands where they are defined and tells
+the project's agents to run them that way.
+
+```text
+Set up heavy (https://github.com/mokevnin/heavy), a machine-wide counting semaphore for heavy commands, in this project. Read its README first.
+
+1. Install heavy the way this project installs its tools: a line in mise.toml if the project uses mise ("github:mokevnin/heavy" = "latest"), otherwise Homebrew or the installer from the README. Everyone who runs the project's tasks needs it, CI included (heavy runs the command at once when CI is set, but the binary must be there). If it cannot be installed for everyone, wrap only the git hooks and leave the shared tasks alone.
+2. Find the heavy commands: test suites, type checks, linters and builds, and the tasks, scripts and git hooks that run them (mise tasks, package.json scripts, a Makefile, hk or lefthook config).
+3. Wrap each heavy command where it is defined, so everyone who runs the task gets it: `heavy -- go test ./...`. Wrap the command itself, not a task that only calls other tasks. Leave quick commands alone.
+4. In git hooks add `--timeout 300 --on-timeout run`, so a busy machine slows a hook down but never fails it.
+5. Add to the project's agent instructions (AGENTS.md, CLAUDE.md or whatever file the project already uses; create AGENTS.md if there is none): run tests, type checks, linters and builds through the project's tasks, or as `heavy -- <command>` when there is no task.
+6. Run each wrapped task once and report what you wrapped and where.
+```
+
 ## How it behaves
 
 - **N slots.** `--slots N` or `HEAVY_SLOTS`; the default is a quarter of the cores, at least one.
