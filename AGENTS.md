@@ -7,6 +7,8 @@
   `cargo clippy --all-targets -- -D warnings`. All three must pass before a push.
 - The tests run the real binary against real processes (`tests/cli.rs`): queueing, `kill -9`,
   nesting, exit codes. A change to the behaviour starts with a test there.
+- The OpenCode plugin tests are `node --test hooks/opencode/heavy.test.mjs` (Node comes from
+  `mise.toml`). Run them when changing `hooks/opencode/`.
 - Releases are made by merging the release pull request that release-please opens from the
   Conventional Commits on `main`: it bumps the version and `CHANGELOG.md`, and the tag it pushes
   (with `RELEASE_PLEASE_TOKEN`, so that the tag starts a workflow) runs `release.yml`. `dist`
