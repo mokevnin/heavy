@@ -38,8 +38,15 @@ Set up heavy (https://github.com/mokevnin/heavy), a machine-wide counting semaph
 3. Wrap each heavy command where it is defined, so everyone who runs the task gets it: `heavy -- go test ./...`. Wrap the command itself, not a task that only calls other tasks. Leave quick commands alone.
 4. In git hooks add `--timeout 300 --on-timeout run`, so a busy machine slows a hook down but never fails it.
 5. Add to the project's agent instructions (AGENTS.md, CLAUDE.md or whatever file the project already uses; create AGENTS.md if there is none): run tests, type checks, linters and builds through the project's tasks, or as `heavy -- <command>` when there is no task.
-6. Run each wrapped task once and report what you wrapped and where.
+6. If the project (or you) use OpenCode, install the OpenCode plugin from `hooks/opencode/` (symlink or copy `heavy.ts` into `~/.config/opencode/plugins/` or `.opencode/plugins/`, see that directory's README) so bash/shell tool calls are wrapped automatically; then restart OpenCode.
+7. Run each wrapped task once and report what you wrapped and where.
 ```
+
+## OpenCode
+
+OpenCode can wrap agent shell commands through heavy without changing each
+task by hand. See [`hooks/opencode/`](hooks/opencode/) for the plugin and
+install steps (copy or symlink `heavy.ts` into OpenCode's `plugins/` directory).
 
 ## How it behaves
 
