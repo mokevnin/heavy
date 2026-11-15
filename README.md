@@ -22,7 +22,14 @@ cargo install heavy                    # from source
 curl -LsSf https://github.com/mokevnin/heavy/releases/latest/download/heavy-installer.sh | sh
 ```
 
-The binaries are built for macOS and Linux, on arm64 and x86_64.
+On Windows, in PowerShell (or with mise or cargo as above):
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/mokevnin/heavy/releases/latest/download/heavy-installer.ps1 | iex"
+```
+
+The binaries are built for macOS and Linux on arm64 and x86_64, and for Windows on x86_64 (which
+Windows on arm runs too).
 
 ## Set up with a coding agent
 
@@ -44,13 +51,14 @@ Set up heavy (https://github.com/mokevnin/heavy), a machine-wide counting semaph
 ## How it behaves
 
 - **N slots.** `--slots N` or `HEAVY_SLOTS`; the default is a quarter of the cores, at least one.
-- **Shared by every process on the machine.** A slot is an exclusive `flock` on a file in
-  `$TMPDIR/heavy/<pool>` (`--dir` or `HEAVY_DIR` moves it). Every checkout, every agent and every
-  tool that opens the same directory shares the slots.
-- **Released however the holder ends.** The operating system drops a `flock` when its holder dies,
-  `kill -9` included, so a crashed run never leaves a slot taken. The command does not inherit the
-  lock: a `heavy` that is killed outright frees its slot at once while its command, if still
-  running, is no longer counted.
+- **Shared by every process on the machine.** A slot is an exclusive `flock` (`LockFileEx` on
+  Windows) on a file in `$TMPDIR/heavy/<pool>` (`%TEMP%\heavy\<pool>` on Windows; `--dir` or
+  `HEAVY_DIR` moves it). Every checkout, every agent and every tool that opens the same directory
+  shares the slots.
+- **Released however the holder ends.** The operating system drops the lock when its holder dies,
+  `kill -9` (or Task Manager) included, so a crashed run never leaves a slot taken. The command
+  does not inherit the lock: a `heavy` that is killed outright frees its slot at once while its
+  command, if still running, is no longer counted.
 - **Waits and says who it waits for.** When every slot is busy it says so once, with who holds
   each slot, and when it gets one, how long it waited:
 
@@ -84,8 +92,12 @@ Set up heavy (https://github.com/mokevnin/heavy), a machine-wide counting semaph
 - **Exit status.** The command's own; `128 + n` when a signal `n` ended it; 127 when it does not
   exist; 75 on a timeout (a command that exits 75 itself looks the same: a timeout is the one
   that prints `gave up waiting` on stderr). `SIGINT`, `SIGTERM` and `SIGHUP` sent to `heavy` reach the command.
-- **`heavy --status`** shows who holds each slot (pid, how long, the command). The record is for
-  display only; the lock is the source of truth.
+- **On Windows** the command's exit code is passed on whole, all 32 bits. Ctrl+C and Ctrl+Break
+  reach the command through the console, and `heavy` waits for it to end. A bare name finds the
+  `.bat` or `.cmd` file it stands for when there is no `.exe`, so `heavy -- pnpm exec tsc` runs
+  `pnpm.cmd`.
+- **`heavy --status`** shows who holds each slot (pid, how long, the command). The record, in
+  `slot-<n>.holder` next to the slot file, is for display only; the lock is the source of truth.
 
 The queue is **not fair**: when a slot frees, the first waiter to look takes it (they look every
 quarter of a second, with jitter). The slot files must be on a local file system.

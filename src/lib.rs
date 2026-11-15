@@ -3,7 +3,8 @@
 //! A [`Pool`] is a directory with one file per slot. Holding a slot is holding an exclusive `flock`
 //! (`LockFileEx` on Windows) on its file, so the operating system frees the slot when the holder
 //! dies, however it dies, and every process on the machine that opens the same directory shares the
-//! same slots, whatever checkout or tool it comes from.
+//! same slots, whatever checkout or tool it comes from. Who holds a slot is recorded in a second
+//! file next to it, because Windows does not let other processes read a locked file.
 //!
 //! ```no_run
 //! use heavy::Pool;
@@ -20,7 +21,7 @@
 use std::collections::hash_map::RandomState;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::hash::{BuildHasher, Hasher};
-use std::io::{self, Read, Seek, Write};
+use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -39,6 +40,7 @@ pub struct Pool {
 #[derive(Debug)]
 pub struct Guard {
     file: File,
+    record: File,
     slot: usize,
 }
 
@@ -113,7 +115,15 @@ impl Pool {
                 .write(true)
                 .open(slot_path(&self.dir, slot))?;
             match file.try_lock() {
-                Ok(()) => return Ok(Some(Guard { file, slot })),
+                Ok(()) => {
+                    // Truncated at once: a holder that died left its record behind.
+                    let record = OpenOptions::new()
+                        .create(true)
+                        .truncate(true)
+                        .write(true)
+                        .open(record_path(&self.dir, slot))?;
+                    return Ok(Some(Guard { file, record, slot }));
+                }
                 Err(TryLockError::WouldBlock) => {}
                 Err(TryLockError::Error(error)) => return Err(error),
             }
@@ -175,7 +185,7 @@ impl Pool {
     pub fn status(&self) -> io::Result<Vec<SlotStatus>> {
         (0..self.slots)
             .map(|slot| {
-                let mut file = OpenOptions::new()
+                let file = OpenOptions::new()
                     .read(true)
                     .write(true)
                     .open(slot_path(&self.dir, slot))?;
@@ -184,7 +194,7 @@ impl Pool {
                         file.unlock()?;
                         None
                     }
-                    Err(TryLockError::WouldBlock) => Some(read_holder(&mut file)?),
+                    Err(TryLockError::WouldBlock) => Some(read_holder(&self.dir, slot)?),
                     Err(TryLockError::Error(error)) => return Err(error),
                 };
                 Ok(SlotStatus { slot, holder })
@@ -210,10 +220,10 @@ impl Guard {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs());
         let command = command.replace(['\n', '\r'], " ");
-        self.file.set_len(0)?;
-        self.file.rewind()?;
-        write!(self.file, "{}\n{since}\n{command}\n", std::process::id())?;
-        self.file.flush()
+        self.record.set_len(0)?;
+        self.record.rewind()?;
+        write!(self.record, "{}\n{since}\n{command}\n", std::process::id())?;
+        self.record.flush()
     }
 }
 
@@ -221,7 +231,7 @@ impl Drop for Guard {
     fn drop(&mut self) {
         // Clear the record first: a free slot must not look held to a reader of the file. The
         // lock is released when the file is closed right after, so an error here changes nothing.
-        let _ = self.file.set_len(0);
+        let _ = self.record.set_len(0);
         let _ = self.file.unlock();
     }
 }
@@ -230,10 +240,19 @@ fn slot_path(dir: &Path, slot: usize) -> PathBuf {
     dir.join(format!("slot-{slot}"))
 }
 
-fn read_holder(file: &mut File) -> io::Result<Holder> {
-    let mut text = String::new();
-    file.rewind()?;
-    file.read_to_string(&mut text)?;
+/// The file that says who holds a slot. It is not the locked file: on Windows a lock keeps every
+/// other process from reading the file it is on.
+fn record_path(dir: &Path, slot: usize) -> PathBuf {
+    dir.join(format!("slot-{slot}.holder"))
+}
+
+fn read_holder(dir: &Path, slot: usize) -> io::Result<Holder> {
+    let text = match fs::read_to_string(record_path(dir, slot)) {
+        Ok(text) => text,
+        // Taken by a holder that has not created the record yet.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error),
+    };
     let mut lines = text.lines();
     let pid = lines.next().and_then(|line| line.parse().ok()).unwrap_or(0);
     let since = lines.next().and_then(|line| line.parse().ok()).unwrap_or(0);
@@ -332,6 +351,18 @@ mod tests {
         assert_eq!(holder.pid, std::process::id());
         assert_eq!(holder.command, "go test ./...");
         assert!(status[1 - held.slot()].holder.is_none());
+    }
+
+    #[test]
+    fn a_new_holder_does_not_show_the_record_a_dead_one_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = Pool::open(dir.path(), 1).unwrap();
+        fs::write(record_path(dir.path(), 0), "4242\n1\nmake\n").unwrap();
+
+        let _held = pool.try_acquire().unwrap().unwrap();
+
+        let holder = pool.status().unwrap()[0].holder.clone().unwrap();
+        assert_eq!(holder.pid, 0);
     }
 
     #[test]
