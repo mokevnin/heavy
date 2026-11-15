@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/mokevnin/heavy/compare/v0.1.2...v0.1.3) (2026-11-15)
+
+
+### Features
+
+* run on Windows ([#8](https://github.com/mokevnin/heavy/issues/8)) ([e95c0c5](https://github.com/mokevnin/heavy/commit/e95c0c50fd45efd7724b023a01eccecf4f302e12)), closes [#7](https://github.com/mokevnin/heavy/issues/7)
+
 ## [0.1.2](https://github.com/mokevnin/heavy/compare/v0.1.1...v0.1.2) (2026-10-26)
 
 
