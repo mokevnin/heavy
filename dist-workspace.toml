@@ -7,15 +7,16 @@ members = ["cargo:."]
 cargo-dist-version = "0.33.1"
 # CI backends to support
 ci = "github"
-# The installers to generate for each app: a shell installer and a Homebrew formula
-installers = ["shell", "homebrew"]
+# The installers to generate for each app: a shell installer, a PowerShell installer for Windows
+# and a Homebrew formula
+installers = ["shell", "powershell", "homebrew"]
 # The Homebrew tap the formula is published to (committed by publish-homebrew.yml with RELEASE_PLEASE_TOKEN)
 tap = "mokevnin/homebrew-tap"
 create-release = false
 publish-jobs = ["./publish-homebrew", "./publish-crates"]
-# Target platforms to build apps for (Rust target-triple syntax). Windows is not built: the
-# queue is tested on macOS and Linux only.
-targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
+# Target platforms to build apps for (Rust target-triple syntax). Windows on arm runs the x86_64
+# build under emulation.
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 
 # Build linux arm64 on a native runner
 [dist.github-custom-runners]

@@ -26,6 +26,8 @@ cli = ["dep:clap", "dep:libc"]
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", optional = true }
 
 [dev-dependencies]

@@ -1,4 +1,7 @@
 //! The `heavy` binary against real processes: queueing, kill -9, nesting, exit codes.
+//!
+//! Every command runs through `sh -c`, so the tests need a POSIX `sh` in `PATH`: on Windows, the
+//! one Git for Windows installs.
 
 use std::process::{Child, Command, Output, Stdio};
 use std::thread::sleep;
@@ -109,6 +112,7 @@ fn a_command_that_does_not_exist_exits_127() {
     assert!(stderr(&output).contains("no-such-command-in-heavy-tests"));
 }
 
+#[cfg(unix)]
 #[test]
 fn a_command_that_dies_of_a_signal_exits_128_plus_the_signal() {
     let slots = Slots::new();
@@ -148,9 +152,9 @@ fn the_command_sees_its_pool_and_its_slot() {
 #[test]
 fn a_second_heavy_waits_until_the_first_is_done() {
     let slots = Slots::new();
-    let mut holder = slots.hold(&["sleep", "2"]);
+    let mut holder = slots.hold(&["sh", "-c", "sleep 2"]);
 
-    let (output, took) = Slots::run(slots.heavy().args(["--", "true"]));
+    let (output, took) = Slots::run(slots.heavy().args(["--", "sh", "-c", "exit 0"]));
 
     assert!(output.status.success());
     assert!(stderr(&output).contains("all 1 slots of pool 'test' are busy"));
@@ -161,9 +165,9 @@ fn a_second_heavy_waits_until_the_first_is_done() {
 #[test]
 fn a_waiting_heavy_says_who_holds_the_slots_and_how_long_it_waited() {
     let slots = Slots::new();
-    let mut holder = slots.hold(&["sleep", "2"]);
+    let mut holder = slots.hold(&["sh", "-c", "sleep 2"]);
 
-    let (output, _) = Slots::run(slots.heavy().args(["--", "true"]));
+    let (output, _) = Slots::run(slots.heavy().args(["--", "sh", "-c", "exit 0"]));
 
     let stderr = stderr(&output);
     assert!(output.status.success());
@@ -177,7 +181,11 @@ fn a_waiting_heavy_says_who_holds_the_slots_and_how_long_it_waited() {
 fn a_heavy_that_does_not_wait_says_nothing() {
     let slots = Slots::new();
 
-    let output = slots.heavy().args(["--", "true"]).output().unwrap();
+    let output = slots
+        .heavy()
+        .args(["--", "sh", "-c", "exit 0"])
+        .output()
+        .unwrap();
 
     assert!(output.status.success());
     assert_eq!(stderr(&output), "");
@@ -186,7 +194,7 @@ fn a_heavy_that_does_not_wait_says_nothing() {
 #[test]
 fn on_timeout_run_runs_the_command_without_a_slot() {
     let slots = Slots::new();
-    let mut holder = slots.hold(&["sleep", "4"]);
+    let mut holder = slots.hold(&["sh", "-c", "sleep 4"]);
 
     let (output, took) = Slots::run(slots.heavy().args([
         "--timeout",
@@ -213,7 +221,7 @@ fn on_timeout_run_runs_the_command_without_a_slot() {
 fn the_log_has_a_line_for_every_queued_run() {
     let slots = Slots::new();
     let log = slots.dir.path().join("runs.jsonl");
-    let mut holder = slots.hold(&["sleep", "3"]);
+    let mut holder = slots.hold(&["sh", "-c", "sleep 3"]);
 
     let (timed_out, _) = Slots::run(slots.heavy().env("HEAVY_LOG", &log).args([
         "--timeout",
@@ -251,11 +259,11 @@ fn the_log_has_a_line_for_every_queued_run() {
 #[test]
 fn a_heavy_killed_outright_frees_its_slot_at_once() {
     let slots = Slots::new();
-    let mut holder = slots.hold(&["sleep", "4"]);
+    let mut holder = slots.hold(&["sh", "-c", "sleep 4"]);
     holder.kill().unwrap();
     holder.wait().unwrap();
 
-    let (output, took) = Slots::run(slots.heavy().args(["--", "true"]));
+    let (output, took) = Slots::run(slots.heavy().args(["--", "sh", "-c", "exit 0"]));
 
     assert!(output.status.success());
     assert!(!stderr(&output).contains("busy"), "{}", stderr(&output));
@@ -265,9 +273,14 @@ fn a_heavy_killed_outright_frees_its_slot_at_once() {
 #[test]
 fn a_command_started_inside_a_held_slot_runs_at_once() {
     let slots = Slots::new();
-    let mut holder = slots.hold(&["sleep", "3"]);
+    let mut holder = slots.hold(&["sh", "-c", "sleep 3"]);
 
-    let (output, took) = Slots::run(slots.heavy().env("HEAVY_HELD", "test").args(["--", "true"]));
+    let (output, took) = Slots::run(
+        slots
+            .heavy()
+            .env("HEAVY_HELD", "test")
+            .args(["--", "sh", "-c", "exit 0"]),
+    );
 
     assert!(output.status.success());
     assert!(took < Duration::from_secs(2), "took {took:?}");
@@ -278,14 +291,14 @@ fn a_command_started_inside_a_held_slot_runs_at_once() {
 #[test]
 fn another_pool_has_slots_of_its_own() {
     let slots = Slots::new();
-    let mut holder = slots.hold(&["sleep", "3"]);
+    let mut holder = slots.hold(&["sh", "-c", "sleep 3"]);
 
     let (output, took) = Slots::run(
         slots
             .heavy()
             .env("HEAVY_POOL", "other")
             .env("HEAVY_HELD", "test")
-            .args(["--", "true"]),
+            .args(["--", "sh", "-c", "exit 0"]),
     );
 
     assert!(output.status.success());
@@ -298,15 +311,22 @@ fn another_pool_has_slots_of_its_own() {
 #[test]
 fn ci_skips_the_queue_unless_asked_not_to() {
     let slots = Slots::new();
-    let mut holder = slots.hold(&["sleep", "3"]);
+    let mut holder = slots.hold(&["sh", "-c", "sleep 3"]);
 
-    let (skipped, took) = Slots::run(slots.heavy().env("CI", "1").args(["--", "true"]));
+    let (skipped, took) = Slots::run(
+        slots
+            .heavy()
+            .env("CI", "1")
+            .args(["--", "sh", "-c", "exit 0"]),
+    );
     let (queued, _) = Slots::run(slots.heavy().env("CI", "1").args([
         "--no-skip-ci",
         "--timeout",
         "1",
         "--",
-        "true",
+        "sh",
+        "-c",
+        "exit 0",
     ]));
 
     assert!(skipped.status.success());
@@ -321,7 +341,7 @@ fn ci_skips_the_queue_unless_asked_not_to() {
 fn status_says_who_holds_a_slot() {
     let slots = Slots::new();
     assert!(slots.status().contains("slot 0: free"));
-    let mut holder = slots.hold(&["sleep", "3"]);
+    let mut holder = slots.hold(&["sh", "-c", "sleep 3"]);
 
     let status = slots.status();
 
@@ -360,9 +380,46 @@ fn a_command_named_status_after_the_separator_is_run() {
 
     let output = slots
         .heavy()
-        .args(["--", "echo", "status"])
+        .args(["--", "sh", "-c", "echo status"])
         .output()
         .unwrap();
 
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "status");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_windows_exit_code_is_not_cut_to_eight_bits() {
+    let slots = Slots::new();
+
+    let output = slots
+        .heavy()
+        .args(["--", "cmd", "/c", "exit 256"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(256));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_bare_name_runs_the_batch_file_it_stands_for() {
+    let slots = Slots::new();
+    let bin = tempfile::tempdir().unwrap();
+    std::fs::write(bin.path().join("heavy-test-shim.cmd"), "@echo shim %1\r\n").unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin.path().to_owned())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+
+    let output = slots
+        .heavy()
+        .env("PATH", path)
+        .args(["--", "heavy-test-shim", "works"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "shim works");
 }

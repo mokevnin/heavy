@@ -2,13 +2,13 @@
 
 use std::cell::Cell;
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::process::{Child, Command};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, ValueEnum};
@@ -88,21 +88,21 @@ impl PoolArgs {
     }
 }
 
-/// The pid of the running command, for the signal handler to pass signals to.
-static CHILD: AtomicI32 = AtomicI32::new(0);
+/// The pid of the running command, or 0: for the signal handler to pass signals to, and on Windows
+/// for the console handler to know whether a command runs.
+static CHILD: AtomicU32 = AtomicU32::new(0);
 
-fn main() -> ExitCode {
+fn main() {
     let cli = Cli::parse();
-    match run(&cli) {
-        Ok(code) => ExitCode::from(code),
-        Err(error) => {
-            eprintln!("heavy: {error}");
-            ExitCode::from(1)
-        }
-    }
+    let code = run(&cli).unwrap_or_else(|error| {
+        eprintln!("heavy: {error}");
+        1
+    });
+    // Not `ExitCode`: it holds 8 bits, and a Windows exit code has 32.
+    std::process::exit(code);
 }
 
-fn run(cli: &Cli) -> std::io::Result<u8> {
+fn run(cli: &Cli) -> std::io::Result<i32> {
     if cli.status {
         return status(&cli.pool);
     }
@@ -207,13 +207,22 @@ fn spawn(
     args: &[OsString],
     pool: &str,
     slot: Option<usize>,
-) -> std::io::Result<u8> {
-    let mut command = Command::new(program);
-    command.args(args).env("HEAVY_HELD", pool);
-    if let Some(slot) = slot {
-        command.env("HEAVY_SLOT", slot.to_string());
-    }
-    let mut child = match command.spawn() {
+) -> std::io::Result<i32> {
+    let start = |program: &OsStr| {
+        let mut command = Command::new(program);
+        command.args(args).env("HEAVY_HELD", pool);
+        if let Some(slot) = slot {
+            command.env("HEAVY_SLOT", slot.to_string());
+        }
+        command.spawn()
+    };
+    let started = match start(program) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            find_script(program).map_or(Err(error), |script| start(script.as_os_str()))
+        }
+        started => started,
+    };
+    let mut child = match started {
         Ok(child) => child,
         Err(error) => {
             eprintln!("heavy: {}: {error}", program.to_string_lossy());
@@ -241,7 +250,7 @@ struct Record<'a> {
 impl Record<'_> {
     /// Appends the record to the log as one JSON line. A log that cannot be written is reported
     /// and does not change the exit status.
-    fn write(&self, exit: u8) {
+    fn write(&self, exit: i32) {
         let Some(path) = self.log else { return };
         let millis = |duration: Duration| duration.as_millis().to_string();
         let mut line = String::from("{");
@@ -321,17 +330,18 @@ fn held_by(holder: &Holder, now: u64) -> String {
 }
 
 #[cfg(unix)]
-fn forward_signals(child: &std::process::Child) {
+fn forward_signals(child: &Child) {
     extern "C" fn pass_on(signal: libc::c_int) {
-        let pid = CHILD.load(Ordering::SeqCst);
-        if pid > 0 {
+        if let Ok(pid) = libc::pid_t::try_from(CHILD.load(Ordering::SeqCst))
+            && pid > 0
+        {
             // SAFETY: kill(2) is async-signal-safe and takes plain integers.
             unsafe {
                 libc::kill(pid, signal);
             }
         }
     }
-    CHILD.store(i32::try_from(child.id()).unwrap_or(0), Ordering::SeqCst);
+    CHILD.store(child.id(), Ordering::SeqCst);
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
         // SAFETY: the handler only calls the async-signal-safe kill(2) and reads an atomic.
         unsafe {
@@ -343,25 +353,75 @@ fn forward_signals(child: &std::process::Child) {
     }
 }
 
-#[cfg(not(unix))]
-fn forward_signals(_child: &std::process::Child) {}
+/// Ctrl+C and Ctrl+Break go to every process of the console, the command included, so there is
+/// nothing to pass on: while the command runs, heavy ignores them and waits for it to end.
+#[cfg(windows)]
+fn forward_signals(child: &Child) {
+    const CTRL_C_EVENT: u32 = 0;
+    const CTRL_BREAK_EVENT: u32 = 1;
+    extern "system" fn ignore_while_running(event: u32) -> i32 {
+        let running = CHILD.load(Ordering::SeqCst) != 0;
+        i32::from(running && matches!(event, CTRL_C_EVENT | CTRL_BREAK_EVENT))
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetConsoleCtrlHandler(handler: Option<extern "system" fn(u32) -> i32>, add: i32) -> i32;
+    }
+    CHILD.store(child.id(), Ordering::SeqCst);
+    // SAFETY: the handler only reads an atomic. A handler, unlike the null one that would make
+    // the command ignore Ctrl+C too, is not inherited by child processes.
+    unsafe {
+        SetConsoleCtrlHandler(Some(ignore_while_running), 1);
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn forward_signals(_child: &Child) {}
+
+/// On Windows, finds the batch file a bare name stands for, as `pnpm` stands for `pnpm.cmd`:
+/// `Command` only looks for `.exe` files, and package managers install `.cmd` shims.
+#[cfg(windows)]
+fn find_script(program: &OsStr) -> Option<PathBuf> {
+    let path = Path::new(program);
+    let candidates: Vec<PathBuf> = if path.parent().is_some_and(|dir| !dir.as_os_str().is_empty()) {
+        vec![path.to_owned()]
+    } else {
+        env::split_paths(&env::var_os("PATH")?)
+            .map(|dir| dir.join(program))
+            .collect()
+    };
+    candidates.into_iter().find_map(|candidate| {
+        [".bat", ".cmd"].into_iter().find_map(|extension| {
+            let mut script = candidate.clone().into_os_string();
+            script.push(extension);
+            let script = PathBuf::from(script);
+            script.is_file().then_some(script)
+        })
+    })
+}
+
+#[cfg(not(windows))]
+fn find_script(_program: &OsStr) -> Option<PathBuf> {
+    None
+}
 
 #[cfg(unix)]
-fn exit_code(status: std::process::ExitStatus) -> u8 {
+fn exit_code(status: std::process::ExitStatus) -> i32 {
     use std::os::unix::process::ExitStatusExt;
     match (status.code(), status.signal()) {
-        (Some(code), _) => u8::try_from(code & 0xff).unwrap_or(1),
-        (None, Some(signal)) => u8::try_from(128 + signal).unwrap_or(1),
+        (Some(code), _) => code & 0xff,
+        (None, Some(signal)) => 128 + signal,
         (None, None) => 1,
     }
 }
 
+/// The whole 32 bits: cutting a Windows exit code to 8 would turn some failures into 0.
 #[cfg(not(unix))]
-fn exit_code(status: std::process::ExitStatus) -> u8 {
-    u8::try_from(status.code().unwrap_or(1) & 0xff).unwrap_or(1)
+fn exit_code(status: std::process::ExitStatus) -> i32 {
+    status.code().unwrap_or(1)
 }
 
-fn status(args: &PoolArgs) -> std::io::Result<u8> {
+fn status(args: &PoolArgs) -> std::io::Result<i32> {
     let pool = args.open()?;
     let now = unix_now();
     println!("pool '{}' in {}", args.pool, pool.dir().display());
